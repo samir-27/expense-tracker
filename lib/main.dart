@@ -49,6 +49,16 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$');
   final DateFormat _dateFormat = DateFormat('MMM dd, yyyy');
 
+  // New: Function to delete an expense
+  Future<void> _deleteExpense(String docId) async {
+    await FirebaseFirestore.instance.collection('expenses').doc(docId).delete();
+  }
+
+  // New: Function to sign out
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
+  }
+
   void _showAddExpenseModal(BuildContext context) {
     final titleController = TextEditingController();
     final amountController = TextEditingController();
@@ -59,42 +69,24 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
       builder: (context) => Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
-          left: 20,
-          right: 20,
-          top: 20,
+          left: 20, right: 20, top: 20,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: titleController,
-              decoration: const InputDecoration(labelText: 'Title'),
-            ),
-            TextField(
-              controller: amountController,
-              decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: TextInputType.number,
-            ),
+            TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Title')),
+            TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
             const SizedBox(height: 20),
             ElevatedButton(
-              // Inside your _showAddExpenseModal, update the onPressed:
               onPressed: () async {
                 final title = titleController.text;
                 final amount = double.tryParse(amountController.text) ?? 0.0;
-
                 if (title.isNotEmpty && amount > 0) {
-                  try {
-                    await FirebaseFirestore.instance
-                        .collection('expenses')
-                        .add({
-                          'title': title,
-                          'amount': amount,
-                          'date': DateTime.now().toIso8601String(),
-                        });
-                    print("Success! Data saved to Firebase.");
-                  } catch (e) {
-                    print("Error saving to Firebase: $e");
-                  }
+                  await FirebaseFirestore.instance.collection('expenses').add({
+                    'title': title,
+                    'amount': amount,
+                    'date': DateTime.now().toIso8601String(),
+                  });
                   if (context.mounted) Navigator.pop(context);
                 }
               },
@@ -113,67 +105,45 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
       appBar: AppBar(
         title: const Text('My Expenses'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          // Sign Out Button
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _signOut,
+          ),
+        ],
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(20.0),
-            child: Text(
-              "Track your spending",
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
+            child: Text("Track your spending", style: Theme.of(context).textTheme.headlineSmall),
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('expenses')
-                  .orderBy('date', descending: true) // Newest items first
-                  .snapshots(),
+              stream: FirebaseFirestore.instance.collection('expenses').orderBy('date', descending: true).snapshots(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text("No expenses added yet!"));
-                }
-
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 final docs = snapshot.data!.docs;
-
-                if (docs.isEmpty) {
-                  return const Center(child: Text("No expenses added yet!"));
-                }
-
+                
                 return ListView.builder(
                   itemCount: docs.length,
                   itemBuilder: (context, index) {
-                    final data = docs[index].data() as Map<String, dynamic>;
+                    final doc = docs[index];
+                    final data = doc.data() as Map<String, dynamic>;
                     final amount = (data['amount'] as num).toDouble();
-
+                    
                     return Card(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
+                      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       child: ListTile(
-                        leading: const CircleAvatar(
-                          child: Icon(Icons.attach_money),
+                        leading: const CircleAvatar(child: Icon(Icons.attach_money)),
+                        title: Text(data['title'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(_dateFormat.format(DateTime.parse(data['date']))),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => _deleteExpense(doc.id), // Delete specific item
                         ),
-                        title: Text(
-                          data['title'],
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Text(
-                          _dateFormat.format(DateTime.parse(data['date'])),
-                        ),
-                        trailing: Text(
-                          _currencyFormat.format(amount),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
-                        ),
+                        titleAlignment: ListTileTitleAlignment.center,
                       ),
                     );
                   },
