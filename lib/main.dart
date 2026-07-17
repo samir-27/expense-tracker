@@ -44,17 +44,21 @@ class ExpenseHomeScreen extends StatefulWidget {
 class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$');
   final User? _user = FirebaseAuth.instance.currentUser;
+  
   double _budget = 1000.0;
+  String _searchQuery = '';
+  String _selectedCategory = 'All';
+  final List<String> _categories = ['All', 'Food', 'Transport', 'Rent', 'Entertainment', 'Other'];
 
   Color _getCategoryColor(String category) {
-  switch (category) {
-    case 'Food': return Colors.orange;
-    case 'Transport': return Colors.blue;
-    case 'Rent': return Colors.red;
-    case 'Entertainment': return Colors.purple;
-    default: return Colors.green;
+    switch (category) {
+      case 'Food': return Colors.orange;
+      case 'Transport': return Colors.blue;
+      case 'Rent': return Colors.red;
+      case 'Entertainment': return Colors.purple;
+      default: return Colors.green;
+    }
   }
-}
 
   Future<void> _deleteExpense(String docId) async {
     await FirebaseFirestore.instance.collection('expenses').doc(docId).delete();
@@ -64,7 +68,6 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
     final titleController = TextEditingController();
     final amountController = TextEditingController();
     String selectedCategory = 'Food';
-    final categories = ['Food', 'Transport', 'Rent', 'Entertainment', 'Other'];
 
     showModalBottomSheet(
       context: context,
@@ -80,7 +83,7 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
               DropdownButton<String>(
                 value: selectedCategory,
                 isExpanded: true,
-                items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                items: _categories.where((c) => c != 'All').map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                 onChanged: (val) => setModalState(() => selectedCategory = val!),
               ),
               ElevatedButton(
@@ -117,11 +120,17 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
         builder: (context, snapshot) {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           
-          final docs = snapshot.data!.docs;
-          double totalSpent = docs.fold(0.0, (sum, doc) => sum + ((doc.data() as Map)['amount'] as num).toDouble());
+          var docs = snapshot.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final matchesSearch = data['title'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
+            final matchesCategory = _selectedCategory == 'All' || data['category'] == _selectedCategory;
+            return matchesSearch && matchesCategory;
+          }).toList();
+
+          double totalSpent = snapshot.data!.docs.fold(0.0, (sum, doc) => sum + ((doc.data() as Map)['amount'] as num).toDouble());
           
           Map<String, double> catData = {};
-          for (var doc in docs) {
+          for (var doc in snapshot.data!.docs) {
             final data = doc.data() as Map<String, dynamic>;
             catData[data['category'] ?? 'Other'] = (catData[data['category'] ?? 'Other'] ?? 0) + (data['amount'] as num).toDouble();
           }
@@ -129,31 +138,23 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
           return Column(
             children: [
               Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: TextField(
-                  decoration: const InputDecoration(labelText: 'Set Monthly Budget'),
-                  keyboardType: TextInputType.number,
-                  onChanged: (val) => setState(() => _budget = double.tryParse(val) ?? 1000.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  children: [
+                    Expanded(child: TextField(decoration: const InputDecoration(labelText: 'Budget'), keyboardType: TextInputType.number, onChanged: (v) => setState(() => _budget = double.tryParse(v) ?? 1000.0))),
+                    const SizedBox(width: 10),
+                    DropdownButton<String>(
+                      value: _selectedCategory,
+                      items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      onChanged: (val) => setState(() => _selectedCategory = val!),
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(
-  height: 180,
-  child: PieChart(
-    PieChartData(
-      sectionsSpace: 2,
-      centerSpaceRadius: 40,
-      sections: catData.entries.map((e) {
-        return PieChartSectionData(
-          color: _getCategoryColor(e.key),
-          value: e.value,
-          title: e.key,
-          radius: 50,
-          titleStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
-        );
-      }).toList(),
-    ),
-  ),
-),
+              TextField(decoration: const InputDecoration(labelText: 'Search', prefixIcon: Icon(Icons.search)), onChanged: (v) => setState(() => _searchQuery = v)),
+              SizedBox(height: 150, child: PieChart(PieChartData(
+                sections: catData.entries.map((e) => PieChartSectionData(color: _getCategoryColor(e.key), title: e.key, value: e.value, radius: 40)).toList()
+              ))),
               Text("Remaining: ${_currencyFormat.format(_budget - totalSpent)}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               Expanded(
                 child: ListView.builder(
