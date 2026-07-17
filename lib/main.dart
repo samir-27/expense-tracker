@@ -45,6 +45,8 @@ class ExpenseHomeScreen extends StatefulWidget {
 class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$');
   final DateFormat _dateFormat = DateFormat('MMM dd, yyyy');
+  // Restoring the _user reference
+  final User? _user = FirebaseAuth.instance.currentUser;
 
   Future<void> _signOut() async => await FirebaseAuth.instance.signOut();
 
@@ -56,47 +58,46 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
     final formKey = GlobalKey<FormState>();
     final titleController = TextEditingController();
     final amountController = TextEditingController();
+    String selectedCategory = 'Food';
+    final categories = ['Food', 'Transport', 'Rent', 'Entertainment', 'Other'];
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 20, left: 20, right: 20, top: 20),
-        child: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title'),
-                validator: (v) => v!.isEmpty ? 'Enter a title' : null,
-              ),
-              TextFormField(
-                controller: amountController,
-                decoration: const InputDecoration(labelText: 'Amount'),
-                keyboardType: TextInputType.number,
-                validator: (v) => double.tryParse(v!) == null ? 'Enter a valid number' : null,
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () async {
-                  if (formKey.currentState!.validate()) {
-                    final uid = FirebaseAuth.instance.currentUser?.uid;
-                    print("Attempting to add for UID: $uid"); // Check console
-                    await FirebaseFirestore.instance.collection('expenses').add({
-                      'userId': uid,
-                      'title': titleController.text,
-                      'amount': double.parse(amountController.text),
-                      'date': DateTime.now().toIso8601String(),
-                    });
-                    if (context.mounted) Navigator.pop(context);
-                  }
-                },
-                child: const Text('Add Expense'),
-              ),
-              const SizedBox(height: 20),
-            ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 20, left: 20, right: 20, top: 20),
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(controller: titleController, decoration: const InputDecoration(labelText: 'Title'), validator: (v) => v!.isEmpty ? 'Enter a title' : null),
+                TextFormField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number, validator: (v) => double.tryParse(v!) == null ? 'Enter a valid number' : null),
+                DropdownButtonFormField<String>(
+                  value: selectedCategory,
+                  decoration: const InputDecoration(labelText: 'Category'),
+                  items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (val) => setModalState(() => selectedCategory = val!),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (formKey.currentState!.validate()) {
+                      await FirebaseFirestore.instance.collection('expenses').add({
+                        'userId': _user?.uid,
+                        'title': titleController.text,
+                        'amount': double.parse(amountController.text),
+                        'category': selectedCategory,
+                        'date': DateTime.now().toIso8601String(),
+                      });
+                      if (context.mounted) Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Add Expense'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -105,8 +106,6 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Expenses'),
@@ -115,45 +114,34 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('expenses')
-            .where('userId', isEqualTo: uid)
+            .where('userId', isEqualTo: _user?.uid ?? '')
             .orderBy('date', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
-          
-          final docs = snapshot.data?.docs ?? [];
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text("No expenses yet."));
+
+          final docs = snapshot.data!.docs;
           final total = docs.fold(0.0, (sum, doc) => sum + ((doc.data() as Map)['amount'] as num).toDouble());
 
           return Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text("Total Spent: ${_currencyFormat.format(total)}", 
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              ),
+              Padding(padding: const EdgeInsets.all(16.0), child: Text("Total Spent: ${_currencyFormat.format(total)}", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
               Expanded(
-                child: docs.isEmpty 
-                    ? const Center(child: Text("No expenses yet. Add some!"))
-                    : ListView.builder(
-                        itemCount: docs.length,
-                        itemBuilder: (context, index) {
-                          final data = docs[index].data() as Map<String, dynamic>;
-                          return Card(
-                            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            child: ListTile(
-                              title: Text(data['title'] ?? 'Untitled'),
-                              subtitle: Text(data['date'] != null ? _dateFormat.format(DateTime.parse(data['date'])) : ''),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () => _deleteExpense(docs[index].id),
-                              ),
-                            ),
-                          );
-                        },
+                child: ListView.builder(
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final data = docs[index].data() as Map<String, dynamic>;
+                    return Card(
+                      child: ListTile(
+                        leading: const CircleAvatar(child: Icon(Icons.category)),
+                        title: Text(data['title'] ?? 'Untitled'),
+                        subtitle: Text("${data['category'] ?? 'General'} • ${_dateFormat.format(DateTime.parse(data['date']))}"),
+                        trailing: IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteExpense(docs[index].id)),
                       ),
+                    );
+                  },
+                ),
               ),
             ],
           );
