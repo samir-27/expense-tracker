@@ -3,14 +3,13 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'firebase_options.dart';
 import 'login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const ExpenseTrackerApp());
 }
 
@@ -44,18 +43,24 @@ class ExpenseHomeScreen extends StatefulWidget {
 
 class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
   final NumberFormat _currencyFormat = NumberFormat.currency(symbol: '\$');
-  final DateFormat _dateFormat = DateFormat('MMM dd, yyyy');
-  // Restoring the _user reference
   final User? _user = FirebaseAuth.instance.currentUser;
+  double _budget = 1000.0;
 
-  Future<void> _signOut() async => await FirebaseAuth.instance.signOut();
+  Color _getCategoryColor(String category) {
+  switch (category) {
+    case 'Food': return Colors.orange;
+    case 'Transport': return Colors.blue;
+    case 'Rent': return Colors.red;
+    case 'Entertainment': return Colors.purple;
+    default: return Colors.green;
+  }
+}
 
   Future<void> _deleteExpense(String docId) async {
     await FirebaseFirestore.instance.collection('expenses').doc(docId).delete();
   }
 
   void _showAddExpenseModal(BuildContext context) {
-    final formKey = GlobalKey<FormState>();
     final titleController = TextEditingController();
     final amountController = TextEditingController();
     String selectedCategory = 'Food';
@@ -67,37 +72,33 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 20, left: 20, right: 20, top: 20),
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(controller: titleController, decoration: const InputDecoration(labelText: 'Title'), validator: (v) => v!.isEmpty ? 'Enter a title' : null),
-                TextFormField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number, validator: (v) => double.tryParse(v!) == null ? 'Enter a valid number' : null),
-                DropdownButtonFormField<String>(
-                  value: selectedCategory,
-                  decoration: const InputDecoration(labelText: 'Category'),
-                  items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (val) => setModalState(() => selectedCategory = val!),
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: () async {
-                    if (formKey.currentState!.validate()) {
-                      await FirebaseFirestore.instance.collection('expenses').add({
-                        'userId': _user?.uid,
-                        'title': titleController.text,
-                        'amount': double.parse(amountController.text),
-                        'category': selectedCategory,
-                        'date': DateTime.now().toIso8601String(),
-                      });
-                      if (context.mounted) Navigator.pop(context);
-                    }
-                  },
-                  child: const Text('Add Expense'),
-                ),
-              ],
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Title')),
+              TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+              DropdownButton<String>(
+                value: selectedCategory,
+                isExpanded: true,
+                items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                onChanged: (val) => setModalState(() => selectedCategory = val!),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (titleController.text.isNotEmpty) {
+                    await FirebaseFirestore.instance.collection('expenses').add({
+                      'userId': _user?.uid,
+                      'title': titleController.text,
+                      'amount': double.tryParse(amountController.text) ?? 0,
+                      'category': selectedCategory,
+                      'date': DateTime.now().toIso8601String(),
+                    });
+                    if (context.mounted) Navigator.pop(context);
+                  }
+                },
+                child: const Text('Add Expense'),
+              ),
+            ],
           ),
         ),
       ),
@@ -108,37 +109,61 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Expenses'),
-        actions: [IconButton(icon: const Icon(Icons.logout), onPressed: _signOut)],
+        title: const Text('My Tracker'),
+        actions: [IconButton(icon: const Icon(Icons.logout), onPressed: () => FirebaseAuth.instance.signOut())],
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('expenses')
-            .where('userId', isEqualTo: _user?.uid ?? '')
-            .orderBy('date', descending: true)
-            .snapshots(),
+        stream: FirebaseFirestore.instance.collection('expenses').where('userId', isEqualTo: _user?.uid).snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text("No expenses yet."));
-
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          
           final docs = snapshot.data!.docs;
-          final total = docs.fold(0.0, (sum, doc) => sum + ((doc.data() as Map)['amount'] as num).toDouble());
+          double totalSpent = docs.fold(0.0, (sum, doc) => sum + ((doc.data() as Map)['amount'] as num).toDouble());
+          
+          Map<String, double> catData = {};
+          for (var doc in docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            catData[data['category'] ?? 'Other'] = (catData[data['category'] ?? 'Other'] ?? 0) + (data['amount'] as num).toDouble();
+          }
 
           return Column(
             children: [
-              Padding(padding: const EdgeInsets.all(16.0), child: Text("Total Spent: ${_currencyFormat.format(total)}", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: TextField(
+                  decoration: const InputDecoration(labelText: 'Set Monthly Budget'),
+                  keyboardType: TextInputType.number,
+                  onChanged: (val) => setState(() => _budget = double.tryParse(val) ?? 1000.0),
+                ),
+              ),
+              SizedBox(
+  height: 180,
+  child: PieChart(
+    PieChartData(
+      sectionsSpace: 2,
+      centerSpaceRadius: 40,
+      sections: catData.entries.map((e) {
+        return PieChartSectionData(
+          color: _getCategoryColor(e.key),
+          value: e.value,
+          title: e.key,
+          radius: 50,
+          titleStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+        );
+      }).toList(),
+    ),
+  ),
+),
+              Text("Remaining: ${_currencyFormat.format(_budget - totalSpent)}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               Expanded(
                 child: ListView.builder(
                   itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    final data = docs[index].data() as Map<String, dynamic>;
-                    return Card(
-                      child: ListTile(
-                        leading: const CircleAvatar(child: Icon(Icons.category)),
-                        title: Text(data['title'] ?? 'Untitled'),
-                        subtitle: Text("${data['category'] ?? 'General'} • ${_dateFormat.format(DateTime.parse(data['date']))}"),
-                        trailing: IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteExpense(docs[index].id)),
-                      ),
+                  itemBuilder: (context, i) {
+                    final data = docs[i].data() as Map<String, dynamic>;
+                    return ListTile(
+                      title: Text(data['title']),
+                      subtitle: Text(data['category'] ?? 'General'),
+                      trailing: IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteExpense(docs[i].id)),
                     );
                   },
                 ),
@@ -147,10 +172,7 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddExpenseModal(context),
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: FloatingActionButton(onPressed: () => _showAddExpenseModal(context), child: const Icon(Icons.add)),
     );
   }
 }
