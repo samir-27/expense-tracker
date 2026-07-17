@@ -3,6 +3,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'firebase_options.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+   import 'login_screen.dart';
 
 void main() async {
   // Ensure Flutter engine is initialized
@@ -15,17 +17,26 @@ void main() async {
 }
 
 class ExpenseTrackerApp extends StatelessWidget {
-  const ExpenseTrackerApp({super.key});
+     const ExpenseTrackerApp({super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.deepPurple),
-      home: const ExpenseHomeScreen(),
-    );
-  }
-}
+     @override
+     Widget build(BuildContext context) {
+       return MaterialApp(
+         debugShowCheckedModeBanner: false,
+         theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.deepPurple),
+         // The StreamBuilder "guards" the app
+         home: StreamBuilder<User?>(
+           stream: FirebaseAuth.instance.authStateChanges(),
+           builder: (context, snapshot) {
+             if (snapshot.hasData) {
+               return const ExpenseHomeScreen();
+             }
+             return const LoginScreen();
+           },
+         ),
+       );
+     }
+   }
 
 class ExpenseHomeScreen extends StatefulWidget {
   const ExpenseHomeScreen({super.key});
@@ -67,24 +78,26 @@ class _ExpenseHomeScreenState extends State<ExpenseHomeScreen> {
             const SizedBox(height: 20),
             ElevatedButton(
               // Inside your _showAddExpenseModal, update the onPressed:
-onPressed: () async {
-  final title = titleController.text;
-  final amount = double.tryParse(amountController.text) ?? 0.0;
-  
-  if (title.isNotEmpty && amount > 0) {
-    try {
-      await FirebaseFirestore.instance.collection('expenses').add({
-        'title': title,
-        'amount': amount,
-        'date': DateTime.now().toIso8601String(),
-      });
-      print("Success! Data saved to Firebase.");
-    } catch (e) {
-      print("Error saving to Firebase: $e");
-    }
-    if (context.mounted) Navigator.pop(context);
-  }
-},
+              onPressed: () async {
+                final title = titleController.text;
+                final amount = double.tryParse(amountController.text) ?? 0.0;
+
+                if (title.isNotEmpty && amount > 0) {
+                  try {
+                    await FirebaseFirestore.instance
+                        .collection('expenses')
+                        .add({
+                          'title': title,
+                          'amount': amount,
+                          'date': DateTime.now().toIso8601String(),
+                        });
+                    print("Success! Data saved to Firebase.");
+                  } catch (e) {
+                    print("Error saving to Firebase: $e");
+                  }
+                  if (context.mounted) Navigator.pop(context);
+                }
+              },
               child: const Text('Add Expense'),
             ),
             const SizedBox(height: 20),
@@ -112,21 +125,20 @@ onPressed: () async {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              
-    stream: FirebaseFirestore.instance
-    .collection('expenses')
-    .orderBy('date', descending: true) // Newest items first
-    .snapshots(),
+              stream: FirebaseFirestore.instance
+                  .collection('expenses')
+                  .orderBy('date', descending: true) // Newest items first
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-    return const Center(child: CircularProgressIndicator());
-  }
-  
-  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-    return const Center(child: Text("No expenses added yet!"));
-  }
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-  final docs = snapshot.data!.docs;
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(child: Text("No expenses added yet!"));
+                }
+
+                final docs = snapshot.data!.docs;
 
                 if (docs.isEmpty) {
                   return const Center(child: Text("No expenses added yet!"));
